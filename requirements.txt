@@ -1,0 +1,26 @@
+# Core server
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+
+# Config
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+
+# GPU / ML (install separately — not included in pip install -r requirements.txt)
+# PyTorch with CUDA 12.x:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# torch>=2.2.0
+# torchvision>=0.17.0
+
+# LLM inference via llama.cpp with CUDA:
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+# llama-cpp-python>=0.2.57
+
+# Stable Diffusion / image generation:
+#   pip install diffusers transformers accelerate Pillow
+# diffusers>=0.27.0
+# transformers>=4.39.0
+# accelerate>=0.28.0
+# Pillow>=10.3.0
