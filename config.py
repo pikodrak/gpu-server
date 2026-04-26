@@ -3,7 +3,6 @@ Configuration management - reads from .env or config.yaml.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +44,10 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         yaml_config = _load_yaml_config()
         for key, value in yaml_config.items():
-            if key in self.model_fields and not os.environ.get(f"GPU_SERVER_{key.upper()}"):
+            # Only apply yaml value when the field still holds its default — pydantic-settings
+            # does not inject .env values into os.environ, so os.environ.get() cannot be used
+            # to detect whether a .env value was set.
+            if key in self.model_fields and getattr(self, key) == self.model_fields[key].default:
                 object.__setattr__(self, key, value)
 
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)

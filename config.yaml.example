@@ -1,5 +1,5 @@
 # GPU Server - config.yaml (alternative to .env)
-# Rename to config.yaml to use. .env values take precedence.
+# Rename to config.yaml to use. .env / env var values take precedence over config.yaml.
 
 host: "0.0.0.0"
 port: 8000

@@ -1,0 +1,9 @@
+.env
+.git
+models/
+outputs/
+__pycache__/
+*.pyc
+.venv/
+README.md
+*.example

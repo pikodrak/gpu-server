@@ -104,7 +104,7 @@ async def health():
     """Status endpoint - no auth required."""
     info = gpu_backend.device_info() if gpu_backend else {}
     return {
-        "status": "ok",
+        "status": "ok" if gpu_backend else "degraded",
         "gpu": info,
         "timestamp": time.time(),
     }
