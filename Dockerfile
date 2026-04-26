@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     build-essential \
     cmake \
+    ninja-build \
     git \
     && rm -rf /var/lib/apt/lists/*
 
