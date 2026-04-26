@@ -5,9 +5,10 @@ services:
     ports:
       - "${GPU_SERVER_PORT:-8000}:8000"
     volumes:
-      - ./models:/models
+      - ./models:/app/models
       - ./outputs:/app/outputs
-      - ./.env:/app/.env:ro
+    env_file:
+      - .env
     deploy:
       resources:
         reservations:

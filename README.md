@@ -3,72 +3,161 @@
 HTTP REST server for GPU-accelerated ML inference on an RTX 4070 Ti (or any CUDA GPU).
 Used by Paperclip agents to run LLM inference and generate game assets (textures, concept art) locally.
 
-## Quick Start
+---
 
-### 1. Install dependencies
+## Prerequisites
+
+### Linux
+
+1. **NVIDIA driver** — 525+ recommended for CUDA 12.1:
+   ```bash
+   nvidia-smi   # confirm driver is installed
+   ```
+
+2. **Docker Engine** (not Docker Desktop):
+   ```bash
+   # Ubuntu/Debian
+   curl -fsSL https://get.docker.com | sh
+   sudo usermod -aG docker $USER   # log out and back in
+   ```
+
+3. **NVIDIA Container Toolkit** — lets Docker access the GPU:
+   ```bash
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+     sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   sudo nvidia-ctk runtime configure --runtime=docker
+   sudo systemctl restart docker
+   ```
+
+4. Verify GPU access inside Docker:
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+   ```
+
+### Windows (Docker Desktop + WSL2)
+
+1. **NVIDIA driver for Windows** (NOT the Linux/WSL driver — the Windows host driver is used):
+   - Download from https://www.nvidia.com/drivers — install on Windows
+   - `nvidia-smi` should work in PowerShell after install
+
+2. **WSL2** with Ubuntu:
+   ```powershell
+   wsl --install -d Ubuntu
+   wsl --set-default-version 2
+   ```
+
+3. **Docker Desktop** with WSL2 backend:
+   - Download from https://www.docker.com/products/docker-desktop
+   - In Docker Desktop → Settings → General: enable **Use the WSL 2 based engine**
+   - In Settings → Resources → WSL Integration: enable your Ubuntu distro
+
+4. **NVIDIA Container Toolkit inside WSL2** (Docker Desktop handles GPU passthrough, but the toolkit must be installed in WSL):
+   ```bash
+   # Run inside WSL2 (Ubuntu terminal)
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+     sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   sudo nvidia-ctk runtime configure --runtime=docker
+   ```
+   > Docker Desktop automatically restarts its engine — no manual `systemctl restart` needed.
+
+5. Verify GPU access (run in WSL2 terminal or PowerShell):
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+   ```
+
+---
+
+## Docker Quick Start
 
 ```bash
-# Create virtualenv
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate   # Windows
+# 1. Clone the repo (or copy the project files)
+git clone https://github.com/pikodrak/gpu-server.git
+cd gpu-server
 
-# PyTorch with CUDA 12.1 (RTX 4070 Ti)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-# Core server
-pip install fastapi "uvicorn[standard]" pydantic pydantic-settings pyyaml python-dotenv
-
-# LLM inference (optional but recommended)
-CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
-
-# Stable Diffusion / image generation (optional)
-pip install diffusers transformers accelerate Pillow
-```
-
-### 2. Configure
-
-```bash
+# 2. Configure
 cp .env.example .env
-# Edit .env and set at minimum:
+# Edit .env — set GPU_SERVER_API_KEYS at minimum:
 #   GPU_SERVER_API_KEYS=["your-secret-key"]
-#   GPU_SERVER_LLM_MODEL_PATH=/path/to/model.gguf   (optional)
-#   GPU_SERVER_SD_ENABLE=true                         (optional)
-```
+# For LLM inference, also set:
+#   GPU_SERVER_LLM_MODEL_PATH=/app/models/llama-3-8b-instruct.Q4_K_M.gguf
 
-Or use `config.yaml` (copy `config.yaml.example` → `config.yaml`).
-
-### 3. Download a model (for LLM inference)
-
-```bash
-# Example: Llama 3 8B Instruct (Q4_K_M quantization, ~4.7 GB)
+# 3. (Optional) Download a GGUF model for LLM inference
 mkdir -p models
+# Example: Llama 3 8B Instruct Q4_K_M (~4.7 GB)
 wget -O models/llama-3-8b-instruct.Q4_K_M.gguf \
   https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 
-# Then set in .env:
-# GPU_SERVER_LLM_MODEL_PATH=./models/llama-3-8b-instruct.Q4_K_M.gguf
+# 4. Build and start
+docker compose up --build
+
+# Server is ready at http://localhost:8000
+# First start takes longer — PyTorch + Stable Diffusion are installed during build (~5–10 min)
 ```
 
-### 4. Run
+To run in the background:
+```bash
+docker compose up -d --build
+docker compose logs -f   # follow logs
+docker compose down      # stop
+```
+
+### Volume layout
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./models/` | `/app/models` | GGUF model files, SD model cache |
+| `./outputs/` | `/app/outputs` | Generated images |
+
+Models downloaded inside the container (e.g. Stable Diffusion from HuggingFace) are cached in `/app/models`, so they survive container restarts.
+
+---
+
+## Running without Docker
 
 ```bash
+# Python 3.11+
+python -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate   # Windows PowerShell
+
+# PyTorch with CUDA 12.1
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Core server
+pip install -r requirements.txt
+
+# LLM inference (optional)
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+# Windows: $env:CMAKE_ARGS="-DGGML_CUDA=on"; pip install llama-cpp-python
+
+# Stable Diffusion (optional)
+pip install diffusers transformers accelerate Pillow
+
+cp .env.example .env
+# Edit .env — at minimum set GPU_SERVER_API_KEYS
+
 python server.py
 ```
-
-Server starts on `http://0.0.0.0:8000` by default.
 
 ---
 
 ## API Reference
 
-All endpoints (except `/health`) require the header:
+All endpoints except `/health` require:
 ```
 X-API-Key: your-secret-key
 ```
 
 ### `GET /health`
-Public status check. Returns GPU info and server status.
+Public status check. Returns GPU info.
 
 ```bash
 curl http://localhost:8000/health
@@ -95,7 +184,7 @@ curl -H "X-API-Key: your-key" http://localhost:8000/api/v1/gpu/info
 ```
 
 ### `POST /api/v1/inference`
-Run LLM text inference.
+LLM text inference (requires `GPU_SERVER_LLM_MODEL_PATH`).
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/inference \
@@ -110,19 +199,8 @@ curl -X POST http://localhost:8000/api/v1/inference \
   }'
 ```
 
-**Response:**
-```json
-{
-  "text": "...",
-  "model": "llama",
-  "tokens_generated": 312,
-  "duration_ms": 4250.5,
-  "device": "NVIDIA GeForce RTX 4070 Ti"
-}
-```
-
 ### `POST /api/v1/image/generate`
-Generate images using Stable Diffusion (requires `GPU_SERVER_SD_ENABLE=true`).
+Image generation via Stable Diffusion (requires `GPU_SERVER_SD_ENABLE=true`).
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/image/generate \
@@ -139,42 +217,19 @@ curl -X POST http://localhost:8000/api/v1/image/generate \
   }'
 ```
 
-Returns a base64-encoded PNG (or a filepath if `output_format: "filepath"`).
+Returns a base64-encoded PNG (or filepath if `output_format: "filepath"`).
 
-> **Note:** The NSFW safety checker is disabled by default (`safety_checker=None`). This is intentional for a local developer tool — operators running this server in shared or production environments should be aware of this and take appropriate precautions.
+> **Note:** The NSFW safety checker is disabled by default. This is intentional for a local developer tool.
 
 ### `POST /api/v1/torch`
-Run a PyTorch operation on GPU. Useful for custom ML workloads and embeddings.
-
-Allowed operations: `matmul`, `dot`, `norm`, `mean`, `std`, `softmax`, `sigmoid`, `relu`, `cosine_similarity`
+PyTorch operation on GPU. Operations: `matmul`, `dot`, `norm`, `mean`, `std`, `softmax`, `sigmoid`, `relu`, `cosine_similarity`.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/torch \
   -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
-  -d '{
-    "operation": "softmax",
-    "data": [1.0, 2.0, 3.0, 4.0]
-  }'
+  -d '{"operation": "softmax", "data": [1.0, 2.0, 3.0, 4.0]}'
 ```
-
----
-
-## Docker
-
-```bash
-# Build and run with GPU passthrough
-docker compose up --build
-
-# Or manually
-docker build -t gpu-server .
-docker run --gpus all -p 8000:8000 \
-  -v $(pwd)/models:/models \
-  -v $(pwd)/.env:/app/.env:ro \
-  gpu-server
-```
-
-Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
 ---
 
@@ -186,19 +241,19 @@ Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-nat
 | `GPU_SERVER_PORT` | `8000` | Port |
 | `GPU_SERVER_API_KEYS` | `[]` | JSON array of valid API keys (required) |
 | `GPU_SERVER_DEVICE` | `cuda` | `cuda`, `cpu`, or `mps` |
-| `GPU_SERVER_LLM_MODEL_PATH` | `` | Path to GGUF model file |
+| `GPU_SERVER_LLM_MODEL_PATH` | `` | Path to GGUF model (in Docker: `/app/models/...`) |
 | `GPU_SERVER_SD_ENABLE` | `false` | Enable Stable Diffusion |
 | `GPU_SERVER_SD_MODEL_ID` | `runwayml/stable-diffusion-v1-5` | HuggingFace model ID |
 | `GPU_SERVER_OUTPUT_DIR` | `./outputs` | Directory for saved images |
 
 ---
 
-## Calling from a Paperclip Agent (Python)
+## Calling from a Paperclip Agent
 
 ```python
 import httpx
 
-GPU_SERVER_URL = "http://192.168.1.100:8000"
+GPU_SERVER_URL = "http://192.168.254.2:8000"
 API_KEY = "your-secret-key"
 
 headers = {"X-API-Key": API_KEY}
@@ -207,11 +262,7 @@ headers = {"X-API-Key": API_KEY}
 resp = httpx.post(
     f"{GPU_SERVER_URL}/api/v1/inference",
     headers=headers,
-    json={
-        "prompt": "Generate 5 enemy names for a fantasy RPG",
-        "max_tokens": 256,
-        "temperature": 0.9,
-    },
+    json={"prompt": "Generate 5 enemy names for a fantasy RPG", "max_tokens": 256},
     timeout=120,
 )
 print(resp.json()["text"])
@@ -220,27 +271,9 @@ print(resp.json()["text"])
 resp = httpx.post(
     f"{GPU_SERVER_URL}/api/v1/image/generate",
     headers=headers,
-    json={
-        "prompt": "game texture, mossy stone wall, seamless, 4k",
-        "width": 512,
-        "height": 512,
-        "steps": 25,
-    },
+    json={"prompt": "game texture, mossy stone wall, seamless, 4k", "width": 512, "height": 512, "steps": 25},
     timeout=300,
 )
 import base64, pathlib
-img_bytes = base64.b64decode(resp.json()["image_data"])
-pathlib.Path("texture.png").write_bytes(img_bytes)
+pathlib.Path("texture.png").write_bytes(base64.b64decode(resp.json()["image_data"]))
 ```
-
----
-
-## Windows Notes
-
-Install PyTorch for CUDA 12.1 the same way. For llama-cpp-python on Windows:
-```powershell
-$env:CMAKE_ARGS="-DGGML_CUDA=on"
-pip install llama-cpp-python
-```
-
-Requires Visual Studio Build Tools and CUDA Toolkit 12.x installed.

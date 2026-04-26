@@ -1,4 +1,3 @@
-# GPU Server - Docker image with CUDA 12.1 support for RTX 4070 Ti
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -35,15 +34,18 @@ RUN pip install -r requirements.txt
 # Copy application
 COPY server.py config.py auth.py gpu_backend.py ./
 
-# Models and outputs as volumes
-VOLUME ["/models", "/app/outputs"]
+# Create directories and non-root user; grant ownership before volume mount
+RUN mkdir -p /app/models /app/outputs && \
+    useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+VOLUME ["/app/models", "/app/outputs"]
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
-
-RUN useradd -m appuser
-USER appuser
 
 CMD ["python3", "server.py"]
