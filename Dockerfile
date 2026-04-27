@@ -19,8 +19,13 @@ WORKDIR /app
 # Install PyTorch with CUDA 12.1
 RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# Install llama-cpp-python with CUDA
-RUN CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+# Install llama-cpp-python with CUDA — prefer prebuilt CUDA 12.1 wheel.
+# LIBRARY_PATH points pip's source-build fallback at the libcuda.so stub,
+# since libcuda is provided by the host driver at runtime, not in the toolkit image.
+RUN LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    CMAKE_ARGS="-DGGML_CUDA=on" \
+    pip install llama-cpp-python \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
 
 # Install Stable Diffusion stack
 RUN pip install diffusers transformers accelerate Pillow
