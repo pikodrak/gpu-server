@@ -13,9 +13,13 @@ api_keys:
 # Device: cuda, cpu, mps
 device: cuda
 
-# LLM model - path to a GGUF file
+# LLM model - path to a GGUF file (takes priority over auto-download)
 llm_model_path: ""
-# Example: llm_model_path: "/models/llama-3-8b-instruct.Q4_K_M.gguf"
+# Example: llm_model_path: "/app/models/llama-3-8b-instruct.Q4_K_M.gguf"
+
+# Auto-download a GGUF model from this URL when llm_model_path is empty.
+# The Dockerfile sets this to TinyLlama 1.1B by default; override here to use a larger model.
+# llm_auto_download_url: "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf"
 
 # Stable Diffusion
 sd_enable: false

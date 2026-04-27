@@ -4,6 +4,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# Auto-download TinyLlama 1.1B Q4_K_M on first startup if no model is configured.
+# Override GPU_SERVER_LLM_MODEL_PATH in .env to use a different model instead.
+ENV GPU_SERVER_LLM_AUTO_DOWNLOAD_URL="https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-dev \

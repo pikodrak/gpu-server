@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # GPU / Models
     device: str = Field(default="cuda")  # cuda, cpu, mps
     llm_model_path: str = Field(default="")
+    # URL to a GGUF file to download automatically when llm_model_path is not set.
+    # The file is saved to <output_dir>/../models/ and llm_model_path is set automatically.
+    llm_auto_download_url: str = Field(default="")
     sd_model_id: str = Field(default="runwayml/stable-diffusion-v1-5")
     sd_enable: bool = Field(default=False)
 

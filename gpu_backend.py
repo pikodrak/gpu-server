@@ -48,11 +48,39 @@ class GPUBackend:
         if settings.sd_enable:
             self._load_sd()
 
+    def _maybe_download_model(self) -> str:
+        """Download the model from llm_auto_download_url if needed; return the local path."""
+        url = settings.llm_auto_download_url
+        filename = url.split("/")[-1].split("?")[0]
+        dest = Path("/app/models") / filename
+        if dest.exists():
+            logger.info(f"Model already downloaded: {dest}")
+            return str(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Downloading model from {url} → {dest} …")
+        import urllib.request
+        tmp = dest.with_suffix(".tmp")
+        try:
+            urllib.request.urlretrieve(url, tmp)
+            tmp.rename(dest)
+            logger.info(f"Model downloaded: {dest} ({dest.stat().st_size / 1e6:.0f} MB)")
+        except Exception as e:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"Model download failed: {e}") from e
+        return str(dest)
+
     def _load_llm(self) -> None:
-        if not settings.llm_model_path:
+        model_path_str = settings.llm_model_path
+        if not model_path_str and settings.llm_auto_download_url:
+            try:
+                model_path_str = self._maybe_download_model()
+            except RuntimeError as e:
+                logger.error(str(e))
+                return
+        if not model_path_str:
             logger.info("No LLM model path set; LLM inference disabled")
             return
-        model_path = Path(settings.llm_model_path)
+        model_path = Path(model_path_str)
         if not model_path.exists():
             logger.warning(f"LLM model not found at {model_path}")
             return
