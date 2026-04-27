@@ -23,7 +23,7 @@ async def verify_api_key(
 
     if not key:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key required: provide X-API-Key header or Authorization: Bearer <key>",
         )
     if not settings.api_keys:
