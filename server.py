@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -95,6 +96,21 @@ class TorchRequest(BaseModel):
     operation: str = Field(..., description="PyTorch operation name")
     data: Any = Field(..., description="Input data (JSON-serializable)")
     kwargs: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── OpenAI-compatible request/response models ────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str = Field(default="llama")
+    messages: list[ChatMessage]
+    max_tokens: int | None = Field(default=None, ge=1, le=4096)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    stream: bool = Field(default=False)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -208,6 +224,79 @@ async def run_torch_operation(req: TorchRequest):
         raise HTTPException(status_code=500, detail="Operation failed")
 
     return {"result": result, "device": gpu_backend.device_info()["name"]}
+
+
+@app.get("/v1/models", dependencies=[Depends(verify_api_key)])
+async def list_models():
+    """OpenAI-compatible model listing."""
+    model_id = "llama"
+    if gpu_backend and gpu_backend._llm is not None:
+        from pathlib import Path
+        raw = settings.llm_model_path
+        model_id = Path(raw).stem if raw else "llama"
+    return {
+        "object": "list",
+        "data": [{"id": model_id, "object": "model", "created": 0, "owned_by": "local"}],
+    }
+
+
+@app.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
+async def chat_completions(req: ChatCompletionRequest):
+    """
+    OpenAI-compatible chat completions endpoint.
+    Wraps the llama-cpp-python backend so any OpenAI client can use this server.
+    Streaming is not yet supported; stream=true is accepted but ignored.
+    """
+    if not gpu_backend:
+        raise HTTPException(status_code=503, detail="GPU backend not initialized")
+
+    system_prompt: str | None = None
+    user_parts: list[str] = []
+    for msg in req.messages:
+        if msg.role == "system":
+            system_prompt = msg.content
+        elif msg.role == "user":
+            user_parts.append(msg.content)
+        elif msg.role == "assistant":
+            user_parts.append(f"Assistant: {msg.content}")
+
+    prompt = "\n\n".join(user_parts) if user_parts else ""
+    max_tokens = req.max_tokens if req.max_tokens is not None else 512
+
+    t0 = time.monotonic()
+    try:
+        result = gpu_backend.run_inference(
+            prompt=prompt,
+            model_name=req.model,
+            max_tokens=max_tokens,
+            temperature=req.temperature,
+            system_prompt=system_prompt,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Inference error: {e}")
+        raise HTTPException(status_code=500, detail="Inference failed")
+
+    tokens_out = result.get("tokens_generated", 0)
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": req.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": result["text"]},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": tokens_out,
+            "total_tokens": tokens_out,
+        },
+    }
 
 
 @app.exception_handler(Exception)
