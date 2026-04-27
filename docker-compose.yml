@@ -9,13 +9,7 @@ services:
       - ./outputs:/app/outputs
     env_file:
       - .env
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    gpus: all
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
