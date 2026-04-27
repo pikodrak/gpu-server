@@ -5,17 +5,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-dev \
+    python3 \
+    python3-dev \
     python3-pip \
     build-essential \
     cmake \
     ninja-build \
     git \
     && rm -rf /var/lib/apt/lists/*
-
-RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python3 && \
-    ln -sf /usr/bin/python3.11 /usr/local/bin/python
 
 WORKDIR /app
 
