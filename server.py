@@ -113,6 +113,37 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = Field(default=False)
 
 
+# ── OpenAI Responses API models (used by opencode and newer OpenAI SDK clients) ─
+
+class ResponsesInputContentPart(BaseModel):
+    type: str
+    text: str = ""
+
+
+class ResponsesInputItem(BaseModel):
+    role: str
+    content: str | list[ResponsesInputContentPart] | list[dict]
+
+
+class ResponsesRequest(BaseModel):
+    model: str = Field(default="llama")
+    input: list[ResponsesInputItem]
+    max_output_tokens: int | None = Field(default=None, ge=1, le=4096)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    stream: bool = Field(default=False)
+
+
+def _extract_text(content: str | list) -> str:
+    if isinstance(content, str):
+        return content
+    return " ".join(
+        p["text"] if isinstance(p, dict) else p.text
+        for p in content
+        if (isinstance(p, dict) and p.get("type") in ("input_text", "text", "output_text"))
+        or (hasattr(p, "type") and p.type in ("input_text", "text", "output_text"))
+    )
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -294,6 +325,70 @@ async def chat_completions(req: ChatCompletionRequest):
         "usage": {
             "prompt_tokens": 0,
             "completion_tokens": tokens_out,
+            "total_tokens": tokens_out,
+        },
+    }
+
+
+@app.post("/v1/responses", dependencies=[Depends(verify_api_key)])
+async def responses(req: ResponsesRequest):
+    """
+    OpenAI Responses API endpoint (used by opencode and newer OpenAI SDK clients).
+    Translates the Responses API input format to chat messages and delegates to the
+    llama-cpp backend, then wraps the result in the Responses API output format.
+    """
+    if not gpu_backend:
+        raise HTTPException(status_code=503, detail="GPU backend not initialized")
+
+    system_prompt: str | None = None
+    user_parts: list[str] = []
+    for item in req.input:
+        text = _extract_text(item.content)
+        if item.role == "system" or item.role == "developer":
+            system_prompt = text
+        elif item.role == "user":
+            if text:
+                user_parts.append(text)
+        elif item.role == "assistant":
+            if text:
+                user_parts.append(f"Assistant: {text}")
+
+    prompt = "\n\n".join(user_parts) if user_parts else ""
+    max_tokens = req.max_output_tokens if req.max_output_tokens is not None else 512
+
+    try:
+        result = gpu_backend.run_inference(
+            prompt=prompt,
+            model_name=req.model,
+            max_tokens=max_tokens,
+            temperature=req.temperature,
+            system_prompt=system_prompt,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Inference error: {e}")
+        raise HTTPException(status_code=500, detail="Inference failed")
+
+    tokens_out = result.get("tokens_generated", 0)
+    return {
+        "id": f"resp-{uuid.uuid4().hex[:12]}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": req.model,
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg-{uuid.uuid4().hex[:12]}",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": result["text"], "annotations": []}],
+                "status": "completed",
+            }
+        ],
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": tokens_out,
             "total_tokens": tokens_out,
         },
     }
