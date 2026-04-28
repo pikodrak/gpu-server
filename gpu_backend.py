@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class GPUBackend:
     def __init__(self) -> None:
         self._torch = None
-        self._llm = None
+        self._models: dict[str, Any] = {}  # name -> Llama instance
         self._sd_pipe = None
         self._device = None
 
@@ -43,14 +43,13 @@ class GPUBackend:
         except ImportError:
             logger.warning("PyTorch not installed — GPU operations disabled")
 
-        self._load_llm()
+        self._load_models()
 
         if settings.sd_enable:
             self._load_sd()
 
-    def _maybe_download_model(self) -> str:
-        """Download the model from llm_auto_download_url if needed; return the local path."""
-        url = settings.llm_auto_download_url
+    def _maybe_download_model(self, url: str) -> str:
+        """Download a GGUF model from url if not already cached; return local path."""
         filename = url.split("/")[-1].split("?")[0]
         dest = Path("/app/models") / filename
         if dest.exists():
@@ -69,36 +68,61 @@ class GPUBackend:
             raise RuntimeError(f"Model download failed: {e}") from e
         return str(dest)
 
-    def _load_llm(self) -> None:
-        model_path_str = settings.llm_model_path
-        if not model_path_str and settings.llm_auto_download_url:
+    def _load_single_model(self, name: str, path: str, auto_download_url: str = "") -> None:
+        """Load one GGUF model and register it under `name`."""
+        model_path_str = path
+        if not model_path_str and auto_download_url:
             try:
-                model_path_str = self._maybe_download_model()
+                model_path_str = self._maybe_download_model(auto_download_url)
             except RuntimeError as e:
                 logger.error(str(e))
                 return
         if not model_path_str:
-            logger.info("No LLM model path set; LLM inference disabled")
+            logger.info(f"Model '{name}': no path configured, skipping")
             return
         model_path = Path(model_path_str)
         if not model_path.exists():
-            logger.warning(f"LLM model not found at {model_path}")
+            logger.warning(f"Model '{name}': file not found at {model_path}")
             return
         try:
             from llama_cpp import Llama  # type: ignore
 
             n_gpu_layers = -1 if (self._device and self._device.type == "cuda") else 0
-            self._llm = Llama(
+            llm = Llama(
                 model_path=str(model_path),
                 n_gpu_layers=n_gpu_layers,
                 n_ctx=4096,
                 verbose=False,
             )
-            logger.info(f"LLM loaded: {model_path.name} (gpu_layers={n_gpu_layers})")
+            self._models[name] = llm
+            logger.info(f"LLM loaded: '{name}' → {model_path.name} (gpu_layers={n_gpu_layers})")
         except ImportError:
             logger.warning("llama-cpp-python not installed; LLM inference disabled")
         except Exception as e:
-            logger.error(f"Failed to load LLM: {e}")
+            logger.error(f"Failed to load model '{name}': {e}")
+
+    def _load_models(self) -> None:
+        if settings.models:
+            for model_cfg in settings.models:
+                self._load_single_model(
+                    name=model_cfg.name,
+                    path=model_cfg.path,
+                    auto_download_url=model_cfg.auto_download_url,
+                )
+        else:
+            # Legacy single-model config
+            path = settings.llm_model_path
+            url = settings.llm_auto_download_url
+            if path:
+                name = Path(path).stem
+            elif url:
+                name = Path(url.split("/")[-1].split("?")[0]).stem
+            else:
+                name = ""
+            if path or url:
+                self._load_single_model(name=name or "default", path=path, auto_download_url=url)
+            else:
+                logger.info("No LLM model configured; LLM inference disabled")
 
     def _load_sd(self) -> None:
         if not self._torch:
@@ -123,6 +147,11 @@ class GPUBackend:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    @property
+    def _llm(self) -> Any:
+        """First loaded model — kept for backward compatibility."""
+        return next(iter(self._models.values()), None)
+
     def device_info(self) -> dict[str, Any]:
         info: dict[str, Any] = {"name": "cpu", "type": "cpu", "available": True}
         if self._torch and self._device:
@@ -139,8 +168,9 @@ class GPUBackend:
 
     def detailed_info(self) -> dict[str, Any]:
         info = self.device_info()
-        info["llm_loaded"] = self._llm is not None
-        info["llm_model"] = settings.llm_model_path
+        info["models_loaded"] = list(self._models.keys())
+        info["llm_loaded"] = bool(self._models)
+        info["llm_model"] = settings.llm_model_path  # legacy field
         info["sd_loaded"] = self._sd_pipe is not None
         info["sd_model"] = settings.sd_model_id
         info["torch_version"] = self._torch.__version__ if self._torch else None
@@ -156,10 +186,25 @@ class GPUBackend:
         temperature: float,
         system_prompt: str | None,
     ) -> dict[str, Any]:
-        if self._llm is None:
+        if not self._models:
             raise ValueError(
-                "No LLM model loaded. Set GPU_SERVER_LLM_MODEL_PATH in .env "
-                "and install llama-cpp-python."
+                "No LLM model loaded. Configure models in config.yaml or set "
+                "GPU_SERVER_LLM_MODEL_PATH in .env and install llama-cpp-python."
+            )
+
+        llm = self._models.get(model_name)
+        if llm is None:
+            # Case-insensitive match
+            lower = model_name.lower()
+            for k, v in self._models.items():
+                if k.lower() == lower:
+                    llm = v
+                    break
+        if llm is None:
+            # Fall back to first loaded model so existing clients aren't broken
+            llm = next(iter(self._models.values()))
+            logger.debug(
+                f"Model '{model_name}' not found; using '{next(iter(self._models))}'"
             )
 
         messages = []
@@ -167,7 +212,7 @@ class GPUBackend:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._llm.create_chat_completion(
+        response = llm.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -272,7 +317,7 @@ class GPUBackend:
         return result.cpu().tolist()
 
     def cleanup(self) -> None:
-        self._llm = None
+        self._models.clear()
         self._sd_pipe = None
         if self._torch and self._device and self._device.type == "cuda":
             self._torch.cuda.empty_cache()
