@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     ninja-build \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -40,6 +41,11 @@ RUN pip install -r requirements.txt
 
 # Copy application
 COPY server.py config.py auth.py gpu_backend.py ./
+
+# Install opencode CLI (installs to ~/.opencode/bin as root, moved to /usr/local/bin)
+RUN curl -fsSL https://opencode.ai/install | bash && \
+    cp /root/.opencode/bin/opencode /usr/local/bin/opencode && \
+    chmod +x /usr/local/bin/opencode
 
 # Create directories and non-root user; grant ownership before volume mount
 RUN mkdir -p /app/models /app/outputs && \
