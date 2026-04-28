@@ -259,15 +259,15 @@ async def run_torch_operation(req: TorchRequest):
 
 @app.get("/v1/models", dependencies=[Depends(verify_api_key)])
 async def list_models():
-    """OpenAI-compatible model listing."""
-    model_id = "llama"
-    if gpu_backend and gpu_backend._llm is not None:
-        from pathlib import Path
-        raw = settings.llm_model_path
-        model_id = Path(raw).stem if raw else "llama"
+    """OpenAI-compatible model listing. Returns all loaded models."""
+    if gpu_backend is None:
+        return {"object": "list", "data": []}
     return {
         "object": "list",
-        "data": [{"id": model_id, "object": "model", "created": 0, "owned_by": "local"}],
+        "data": [
+            {"id": name, "object": "model", "created": 0, "owned_by": "local"}
+            for name in gpu_backend._models
+        ],
     }
 
 
